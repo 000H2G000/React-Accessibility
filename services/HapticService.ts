@@ -267,34 +267,41 @@ export class HapticService {  private static readonly defaultSettings: QCMVibrat
    */
   static async testAllAnswerVibrations(): Promise<void> {
     const letters = ['a', 'b', 'c', 'd', 'e'];
-    let loopCount = 1;
-    
-    // Infinite loop
+    let loopCount = 1;    // Infinite loop
     while (true) {
-      console.log(`Starting loop ${loopCount} - Playing 8 medium vibrations...`);
+      console.log(`Starting loop ${loopCount} - Playing 20 medium vibrations...`);
       
-      // Play 8 medium vibrations at the start of each loop
-      for (let j = 0; j < 8; j++) {
+      // Play 20 medium vibrations at the start of each loop
+      for (let j = 0; j < 20; j++) {
         await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         // Small delay between medium vibrations (except after the last one)
-        if (j < 7) {
+        if (j < 19) {
           await this.delay(150); // 150ms between medium vibrations
         }
       }
       
-      // Pause after the 8 medium vibrations before starting letters
+      // Pause after the 20 medium vibrations before starting letters
       await this.delay(1000);
-      
-      // Test each letter in sequence
+        // Test each letter in sequence
       for (let i = 0; i < letters.length; i++) {
         console.log(`Loop ${loopCount} - Testing vibration for letter: ${letters[i].toUpperCase()}`);
         
         // Vibrate for the current letter
         await this.vibrateForAnswer(letters[i]);
-        
-        // Add 2.5 second margin between letters (except after the last one)
+          // Add 6 medium vibrations between letters (except after the last one)
         if (i < letters.length - 1) {
-          await this.delay(2500); // 2.5 seconds of silence
+          await this.delay(500); // Brief pause before medium vibrations
+          
+          console.log(`Loop ${loopCount} - Playing 6 medium vibrations between ${letters[i].toUpperCase()} and ${letters[i + 1].toUpperCase()}`);
+          for (let k = 0; k < 6; k++) {
+            await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+            // Small delay between medium vibrations (except after the last one)
+            if (k < 5) {
+              await this.delay(150); // 150ms between medium vibrations
+            }
+          }
+          
+          await this.delay(5000); // 5 seconds of silence after the 6 medium vibrations
         }
       }
       
