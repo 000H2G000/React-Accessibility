@@ -12,17 +12,70 @@ import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 import { HapticService } from '@/services/HapticService';
 import { QCMAnswer, QCMPatternService } from '@/services/QCMPatternService';
+import { QCMServerService, QCMFetchResponse, SessionInfo } from '@/services/QCMServerService';
+import { FlashlightService } from '@/services/FlashlightService';
+import { QCMVibrationFlashService } from '@/services/QCMVibrationFlashService';
 
 export default function HomeScreen() {
-  const [inputText, setInputText] = useState('');
-  const [detectedAnswers, setDetectedAnswers] = useState<QCMAnswer[]>([]);
+  const [inputText, setInputText] = useState('');  const [detectedAnswers, setDetectedAnswers] = useState<QCMAnswer[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [hapticAvailable, setHapticAvailable] = useState(false);
-
+  const [flashlightAvailable, setFlashlightAvailable] = useState(false);
+  const [enableFlashlight, setEnableFlashlight] = useState(true);
+    // Server-related state
+  const [serverUrl, setServerUrl] = useState('https://e374-34-147-38-236.ngrok-free.app');
+  const [isPolling, setIsPolling] = useState(false);
+  const [serverConnected, setServerConnected] = useState(false);
+  const [availableSessions, setAvailableSessions] = useState<SessionInfo[]>([]);
+  const [lastFetchedData, setLastFetchedData] = useState<QCMFetchResponse | null>(null);
   useEffect(() => {
-    // Check if haptic feedback is available
-    HapticService.isHapticAvailable().then(setHapticAvailable);
-  }, []);
+    // Check if haptic feedback and flashlight are available
+    const checkAvailability = async () => {
+      const haptic = await HapticService.isHapticAvailable();
+      const flashlight = await FlashlightService.isFlashlightAvailable();
+      setHapticAvailable(haptic);
+      setFlashlightAvailable(flashlight);
+      
+      if (flashlight) {
+        console.log('✨ Flashlight available for visual separation');
+      } else {
+        console.log('⚠️ Flashlight not available on this device');
+      }
+    };
+    
+    checkAvailability();
+    
+    // Set up QCM data listener
+    const handleQCMData = (data: QCMFetchResponse) => {
+      console.log('📱 Received QCM data from server:', data);
+      setLastFetchedData(data);
+      setInputText(data.formatted_text);
+      
+      // Show notification
+      Alert.alert(
+        '📝 New QCM Received!',
+        `Session: ${data.session_id}\nQuestions: ${data.total_answers}\n\nData loaded into input field.`,
+        [
+          { text: 'View Only', style: 'cancel' },
+          { 
+            text: 'Process & Vibrate', 
+            onPress: () => {
+              if (hapticAvailable) {
+                handleProcessText();
+              }
+            }
+          }
+        ]
+      );
+    };
+    
+    QCMServerService.addListener(handleQCMData);
+    
+    return () => {
+      QCMServerService.removeListener(handleQCMData);
+      QCMServerService.stopPolling();
+    };
+  }, [hapticAvailable]);
 
   useEffect(() => {
     // Real-time QCM detection as user types
@@ -33,7 +86,6 @@ export default function HomeScreen() {
       setDetectedAnswers([]);
     }
   }, [inputText]);
-
   const handleProcessText = async () => {
     if (!inputText.trim()) {
       Alert.alert('Error', 'Please enter some text to process');
@@ -46,17 +98,34 @@ export default function HomeScreen() {
       return;
     }
 
-    if (!hapticAvailable) {
-      Alert.alert('Haptic Unavailable', 'Haptic feedback is not available on this device');
+    if (!hapticAvailable && !flashlightAvailable) {
+      Alert.alert('Features Unavailable', 'Neither haptic feedback nor flashlight is available on this device');
       return;
     }
 
     setIsProcessing(true);
     try {
-      await HapticService.vibrateForQCMAnswers(answers);
+      // Use the combined service for vibration + flash separation
+      await QCMVibrationFlashService.processQCMWithFlashSeparation(answers, {
+        enableVibration: hapticAvailable,
+        enableFlashlight: flashlightAvailable && enableFlashlight,
+        flashlightSeparatorDuration: 500,
+        delayBetweenAnswers: 1000,
+        delayAfterSeparator: 300,
+      });
+      
+      const processedCount = answers.length;
+      const features = [];
+      if (hapticAvailable) features.push('vibration');
+      if (flashlightAvailable && enableFlashlight) features.push('flashlight separation');
+      
+      Alert.alert(
+        '✅ Processing Complete', 
+        `Processed ${processedCount} QCM answers with ${features.join(' + ')}`
+      );
     } catch (error) {
-      Alert.alert('Error', 'Failed to generate vibrations');
-      console.error('Vibration error:', error);
+      Alert.alert('Error', 'Failed to process QCM answers');
+      console.error('QCM processing error:', error);
     } finally {
       setIsProcessing(false);
     }
@@ -92,6 +161,71 @@ export default function HomeScreen() {
     }
   };
 
+  const handleTestFlashlight = async () => {
+    if (!flashlightAvailable) {
+      Alert.alert('Flashlight Unavailable', 'Flashlight is not available on this device');
+      return;
+    }
+
+    try {
+      await QCMVibrationFlashService.testFlashlight();
+      Alert.alert('✨ Flashlight Test', 'Flashlight test completed!');
+    } catch (error) {
+      console.error('Flashlight test error:', error);
+      Alert.alert('Error', 'Failed to test flashlight');
+    }
+  };
+
+  const handleTestCombined = async () => {
+    if (!hapticAvailable && !flashlightAvailable) {
+      Alert.alert('Features Unavailable', 'Neither haptic feedback nor flashlight is available');
+      return;
+    }
+
+    setIsProcessing(true);
+    try {
+      await QCMVibrationFlashService.testCombined();
+      Alert.alert('✨ Combined Test', 'Combined vibration + flash test completed!');
+    } catch (error) {
+      console.error('Combined test error:', error);
+      Alert.alert('Error', 'Failed to test combined functionality');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleTestCustomPattern = async () => {
+    if (!hapticAvailable && !flashlightAvailable) {
+      Alert.alert('Features Unavailable', 'Neither haptic feedback nor flashlight is available');
+      return;
+    }
+
+    setIsProcessing(true);
+    try {
+      // Example: "1-A flash B, 2-A, 3-C flash B flash A"
+      const pattern = [
+        { answer: 'a', flashAfter: true },  // 1-A [flash]
+        { answer: 'b', flashAfter: false }, // B
+        { answer: 'a', flashAfter: false }, // 2-A
+        { answer: 'c', flashAfter: true },  // 3-C [flash]
+        { answer: 'b', flashAfter: true },  // B [flash]
+        { answer: 'a', flashAfter: false }  // A
+      ];
+
+      await QCMVibrationFlashService.executeCustomPattern(pattern, {
+        enableVibration: hapticAvailable,
+        enableFlashlight: flashlightAvailable && enableFlashlight,
+      });
+
+      Alert.alert('✨ Custom Pattern', 'Custom pattern "A-flash-B, A, C-flash-B-flash-A" completed!');
+    } catch (error) {
+      console.error('Custom pattern test error:', error);
+      Alert.alert('Error', 'Failed to test custom pattern');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   const handleClearText = () => {
     setInputText('');
     setDetectedAnswers([]);
@@ -99,6 +233,64 @@ export default function HomeScreen() {
 
   const getExampleText = () => {
     return "1/c\n2/b\n3/a\n4/d\n5/e";
+  };
+
+  // Server control functions
+  const handleTestConnection = async () => {
+    QCMServerService.updateServerUrl(serverUrl);
+    const connected = await QCMServerService.testConnection();
+    setServerConnected(connected);
+    
+    if (connected) {
+      Alert.alert('✅ Connected', 'Successfully connected to server!');
+      await refreshSessions();
+    } else {
+      Alert.alert('❌ Connection Failed', 'Could not connect to server. Please check the URL.');
+    }
+  };
+
+  const refreshSessions = async () => {
+    const sessionsData = await QCMServerService.listSessions();
+    if (sessionsData) {
+      setAvailableSessions(sessionsData.sessions);
+    }
+  };
+  const handleStartPolling = () => {
+    if (!serverConnected) {
+      Alert.alert('Error', 'Please test connection first');
+      return;
+    }
+
+    QCMServerService.startSimplePolling(3000);
+    setIsPolling(true);
+    Alert.alert('🔄 Polling Started', 'Listening for new QCM data from server');
+  };
+
+  const handleStopPolling = () => {
+    QCMServerService.stopPolling();
+    setIsPolling(false);
+    Alert.alert('⏹️ Polling Stopped', 'No longer listening for new QCM data');
+  };
+  const handleFetchSpecific = async () => {
+    const data = await QCMServerService.fetchLatestQCM();
+    if (data) {
+      setLastFetchedData(data);
+      setInputText(data.formatted_text);
+      Alert.alert('📝 QCM Fetched', `Loaded ${data.total_answers} answers from session: ${data.session_id}`);
+    } else {
+      Alert.alert('📭 No Data', 'No QCM data found on server');
+    }
+  };
+  const handleSelectSession = (selectedSessionId: string) => {
+    Alert.alert(
+      'Session Selected',
+      `Selected session: ${selectedSessionId}\n\nWhat would you like to do?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Fetch QCM', onPress: () => handleFetchSpecific() },
+        { text: 'Start Polling', onPress: () => handleStartPolling() }
+      ]
+    );
   };
 
   return (
@@ -151,7 +343,121 @@ export default function HomeScreen() {
               <ThemedText style={styles.buttonText}>Clear</ThemedText>
             </TouchableOpacity>
           </View>
+        </ThemedView>        {/* Server Controls Section */}
+        <ThemedView style={styles.section}>
+          <ThemedText type="subtitle" style={styles.sectionTitle}>
+            🌐 Server Connection
+          </ThemedText>
+          
+          <ThemedText style={styles.helpText}>
+            Connect to your server to automatically receive QCM data:
+          </ThemedText>
+          <TextInput
+            style={styles.urlInput}
+            value={serverUrl}
+            onChangeText={setServerUrl}
+            placeholder="Enter your ngrok server URL"
+            placeholderTextColor="#666"
+          />
+          
+          <View style={styles.buttonRow}>
+            <TouchableOpacity 
+              style={[styles.button, serverConnected && styles.connectedButton]}
+              onPress={handleTestConnection}
+            >
+              <ThemedText style={styles.buttonText}>
+                {serverConnected ? '✅ Connected' : '🔗 Test Connection'}
+              </ThemedText>
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+              style={[styles.button, styles.refreshButton]}
+              onPress={refreshSessions}
+              disabled={!serverConnected}
+            >
+              <ThemedText style={styles.buttonText}>🔄 Refresh Sessions</ThemedText>
+            </TouchableOpacity>
+          </View>          <View style={styles.buttonRow}>
+            <TouchableOpacity 
+              style={[
+                styles.button, 
+                isPolling ? styles.pollingButton : styles.startPollingButton,
+                !serverConnected && styles.disabledButton
+              ]}
+              onPress={isPolling ? handleStopPolling : handleStartPolling}
+              disabled={!serverConnected}
+            >
+              <ThemedText style={styles.buttonText}>
+                {isPolling ? '⏹️ Stop Polling' : '▶️ Start Polling'}
+              </ThemedText>
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+              style={[styles.button, styles.fetchButton, !serverConnected && styles.disabledButton]}
+              onPress={handleFetchSpecific}
+              disabled={!serverConnected}
+            >
+              <ThemedText style={styles.buttonText}>📥 Fetch Latest</ThemedText>
+            </TouchableOpacity>
+          </View>
+
+          {isPolling && (
+            <ThemedText style={styles.pollingStatus}>
+              🔄 Listening for new QCM data from server
+            </ThemedText>
+          )}
         </ThemedView>
+
+        {/* Available Sessions */}
+        {availableSessions.length > 0 && (
+          <ThemedView style={styles.section}>
+            <ThemedText type="subtitle" style={styles.sectionTitle}>
+              📋 Available Sessions ({availableSessions.length})
+            </ThemedText>
+            <View style={styles.sessionsContainer}>
+              {availableSessions.map((session, index) => (
+                <TouchableOpacity
+                  key={index}
+                  style={styles.sessionItem}
+                  onPress={() => handleSelectSession(session.session_id)}
+                >
+                  <ThemedText style={styles.sessionId}>
+                    📝 {session.session_id}
+                  </ThemedText>
+                  <ThemedText style={styles.sessionInfo}>
+                    {session.total_answers} answers • {new Date(session.submitted_at).toLocaleString()}
+                  </ThemedText>
+                  <ThemedText style={styles.sessionPreview}>
+                    {session.preview}
+                  </ThemedText>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </ThemedView>
+        )}
+
+        {/* Last Fetched Data */}
+        {lastFetchedData && (
+          <ThemedView style={styles.section}>
+            <ThemedText type="subtitle" style={styles.sectionTitle}>
+              📊 Last Received Data
+            </ThemedText>
+            <View style={styles.dataContainer}>
+              <ThemedText style={styles.dataText}>
+                <ThemedText style={styles.bold}>Session:</ThemedText> {lastFetchedData.session_id}
+              </ThemedText>
+              <ThemedText style={styles.dataText}>
+                <ThemedText style={styles.bold}>Questions:</ThemedText> {lastFetchedData.total_answers}
+              </ThemedText>
+              <ThemedText style={styles.dataText}>
+                <ThemedText style={styles.bold}>Received:</ThemedText> {new Date(lastFetchedData.submitted_at).toLocaleString()}
+              </ThemedText>
+              <ThemedText style={styles.formattedData}>
+                {lastFetchedData.formatted_text}
+              </ThemedText>
+            </View>
+          </ThemedView>
+        )}
 
         {/* Detection Results */}
         {detectedAnswers.length > 0 && (
@@ -191,11 +497,11 @@ export default function HomeScreen() {
             <ThemedText style={styles.primaryButtonText}>
               {isProcessing ? 'Processing...' : `Vibrate All (${detectedAnswers.length})`}
             </ThemedText>
-          </TouchableOpacity>
-
-          <ThemedText style={styles.helpText}>
+          </TouchableOpacity>          <ThemedText style={styles.helpText}>
             Test individual answer vibrations:
-          </ThemedText>          <View style={styles.testButtonsContainer}>
+          </ThemedText>
+          
+          <View style={styles.testButtonsContainer}>
             {['a', 'b', 'c', 'd', 'e'].map((answer) => (
               <TouchableOpacity
                 key={answer}
@@ -360,6 +666,15 @@ const styles = StyleSheet.create({
     minHeight: 120,
     marginBottom: 12,
   },
+  urlInput: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 16,
+    backgroundColor: '#fafafa',
+    marginBottom: 12,
+  },
   buttonRow: {
     flexDirection: 'row',
     gap: 12,
@@ -373,6 +688,24 @@ const styles = StyleSheet.create({
   },
   clearButton: {
     backgroundColor: '#FF5722',
+  },
+  connectedButton: {
+    backgroundColor: '#4CAF50',
+  },
+  refreshButton: {
+    backgroundColor: '#3F51B5',
+  },
+  fetchButton: {
+    backgroundColor: '#9C27B0',
+  },
+  pollingButton: {
+    backgroundColor: '#FF9800',
+  },
+  startPollingButton: {
+    backgroundColor: '#2196F3',
+  },
+  disabledButton: {
+    backgroundColor: '#ccc',
   },
   buttonText: {
     color: '#fff',
@@ -405,9 +738,6 @@ const styles = StyleSheet.create({
     padding: 16,
     alignItems: 'center',
     marginBottom: 16,
-  },
-  disabledButton: {
-    backgroundColor: '#ccc',
   },
   primaryButtonText: {
     color: '#fff',
@@ -499,5 +829,57 @@ const styles = StyleSheet.create({
   bold: {
     fontWeight: '600',
     color: '#333',
+  },
+  pollingStatus: {
+    marginTop: 8,
+    fontSize: 14,
+    color: '#4CAF50',
+    textAlign: 'center',
+  },
+  sessionsContainer: {
+    gap: 12,
+    marginTop: 8,
+  },
+  sessionItem: {
+    backgroundColor: '#f9f9f9',
+    borderRadius: 8,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#ddd',
+  },
+  sessionId: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+  },
+  sessionInfo: {
+    fontSize: 14,
+    color: '#666',
+    marginTop: 4,
+  },
+  sessionPreview: {
+    fontSize: 14,
+    color: '#333',
+    marginTop: 8,
+    fontStyle: 'italic',
+  },
+  dataContainer: {
+    backgroundColor: '#f9f9f9',
+    borderRadius: 8,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    marginTop: 8,
+  },
+  dataText: {
+    fontSize: 14,
+    color: '#333',
+    marginBottom: 4,
+  },
+  formattedData: {
+    fontSize: 14,
+    color: '#2196F3',
+    fontWeight: '500',
+    marginTop: 8,
   },
 });
