@@ -48,7 +48,7 @@ export default function HomeScreen() {
   const [stopAfterProcessing, setStopAfterProcessing] = useState(true);
   const [apiInitialized, setApiInitialized] = useState(false);
   const [lastProcessingResult, setLastProcessingResult] = useState<ProcessingResult | null>(null);
-  const [currentPollingInterval, setCurrentPollingInterval] = useState(POLLING_INTERVALS.THREE_MINUTES);
+  const [currentPollingInterval, setCurrentPollingInterval] = useState(POLLING_INTERVALS.FIVE_MINUTES);
   
   // Server-related state
   const [serverUrl, setServerUrl] = useState('https://e374-34-147-38-236.ngrok-free.app');

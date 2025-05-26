@@ -253,15 +253,16 @@ export class QCMVibrationFlashService {
    * Play 20 medium vibrations with consistent timing
    */
   private static async play20MediumVibrations(): Promise<void> {
-    for (let i = 0; i < 20; i++) {
-      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      // Small delay between medium vibrations (except after the last one)
-      if (i < 19) {
-        await this.delay(150); // 150ms between medium vibrations
-      }
+    // One long continuous vibration for 10 seconds
+    const startTime = Date.now();
+    const duration = 10000; // 10 seconds
+    
+    while (Date.now() - startTime < duration) {
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+      await this.delay(50); // Very short delay to maintain continuous feel
     }
     
-    // Brief pause after the 20 medium vibrations
+    // Brief pause after the long vibration
     await this.delay(500);
   }
 
