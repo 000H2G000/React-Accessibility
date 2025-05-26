@@ -184,6 +184,20 @@ export class QCMServerService {
   }
 
   /**
+   * Remove all listeners (alias for clearListeners)
+   */
+  static removeAllListeners() {
+    this.clearListeners();
+  }
+
+  /**
+   * Check if currently polling
+   */
+  static get isPolling(): boolean {
+    return this.pollingInterval !== null;
+  }
+
+  /**
    * Delete a session from the server
    */
   static async deleteSession(sessionId: string): Promise<boolean> {

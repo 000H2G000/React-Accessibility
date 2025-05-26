@@ -168,20 +168,44 @@ export class HapticService {  private static readonly defaultSettings: QCMVibrat
       await this.executeVibrationPattern(pattern);
     }
   }
-
   /**
-   * Vibrates for a specific answer (a, b, c, d, e)
+   * Vibrates for a specific answer (a, b, c, d, e) or multi-character answers (ab, bc, etc.)
    */
   static async vibrateForAnswer(answer: string): Promise<void> {
-    const normalizedAnswer = answer.toLowerCase() as keyof typeof this.settings.answerPatterns;
+    const normalizedAnswer = answer.toLowerCase();
     
-    if (!this.settings.answerPatterns[normalizedAnswer]) {
-      console.warn(`Unknown answer: ${answer}`);
-      return;
-    }
+    // If it's a single character, use the existing patterns
+    if (normalizedAnswer.length === 1) {
+      const singleAnswer = normalizedAnswer as keyof typeof this.settings.answerPatterns;
+      
+      if (!this.settings.answerPatterns[singleAnswer]) {
+        console.warn(`Unknown single answer: ${answer}`);
+        return;
+      }
 
-    const patterns = this.settings.answerPatterns[normalizedAnswer];
-    await this.executeVibrationSequence(patterns);
+      const patterns = this.settings.answerPatterns[singleAnswer];
+      await this.executeVibrationSequence(patterns);
+    } else {
+      // For multi-character answers, vibrate each letter in sequence with small delays
+      console.log(`Processing multi-character answer: ${normalizedAnswer}`);
+      
+      for (let i = 0; i < normalizedAnswer.length; i++) {
+        const letter = normalizedAnswer[i] as keyof typeof this.settings.answerPatterns;
+        
+        if (this.settings.answerPatterns[letter]) {
+          console.log(`Vibrating for letter: ${letter.toUpperCase()}`);
+          const patterns = this.settings.answerPatterns[letter];
+          await this.executeVibrationSequence(patterns);
+          
+          // Add a small delay between letters in multi-character answers (except after the last letter)
+          if (i < normalizedAnswer.length - 1) {
+            await this.delay(300); // 300ms delay between letters in multi-answer
+          }
+        } else {
+          console.warn(`Unknown letter in multi-character answer: ${letter}`);
+        }
+      }
+    }
   }
 
   /**
@@ -260,18 +284,20 @@ export class HapticService {  private static readonly defaultSettings: QCMVibrat
    */
   static async testQuestionNumberVibration(questionNumber: number): Promise<void> {
     await this.vibrateForQuestionNumber(questionNumber);
-  }
-  /**
-   * Test all answer letters (A, B, C, D, E) with 2.5 second margin between each
-   * Loops continuously with 8 medium vibrations at the start of each loop
+  }  /**
+   * Test all answer letters (A, B, C, D, E) with new pattern
+   * New pattern: 20 medium vibrations before each letter
    */
   static async testAllAnswerVibrations(): Promise<void> {
     const letters = ['a', 'b', 'c', 'd', 'e'];
-    let loopCount = 1;    // Infinite loop
-    while (true) {
-      console.log(`Starting loop ${loopCount} - Playing 20 medium vibrations...`);
+    
+    console.log('Starting vibration test with new pattern...');
       
-      // Play 20 medium vibrations at the start of each loop
+    // Test each letter with 20 medium vibrations before each
+    for (let i = 0; i < letters.length; i++) {
+      console.log(`Playing 20 medium vibrations for letter: ${letters[i].toUpperCase()}`);
+      
+      // Play 20 medium vibrations before each letter
       for (let j = 0; j < 20; j++) {
         await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         // Small delay between medium vibrations (except after the last one)
@@ -280,36 +306,21 @@ export class HapticService {  private static readonly defaultSettings: QCMVibrat
         }
       }
       
-      // Pause after the 20 medium vibrations before starting letters
-      await this.delay(1000);
-        // Test each letter in sequence
-      for (let i = 0; i < letters.length; i++) {
-        console.log(`Loop ${loopCount} - Testing vibration for letter: ${letters[i].toUpperCase()}`);
-        
-        // Vibrate for the current letter
-        await this.vibrateForAnswer(letters[i]);
-          // Add 6 medium vibrations between letters (except after the last one)
-        if (i < letters.length - 1) {
-          await this.delay(500); // Brief pause before medium vibrations
-          
-          console.log(`Loop ${loopCount} - Playing 6 medium vibrations between ${letters[i].toUpperCase()} and ${letters[i + 1].toUpperCase()}`);
-          for (let k = 0; k < 6; k++) {
-            await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-            // Small delay between medium vibrations (except after the last one)
-            if (k < 5) {
-              await this.delay(150); // 150ms between medium vibrations
-            }
-          }
-          
-          await this.delay(5000); // 5 seconds of silence after the 6 medium vibrations
-        }
+      // Brief pause after 20 medium vibrations
+      await this.delay(500);
+      
+      console.log(`Testing vibration for letter: ${letters[i].toUpperCase()}`);
+      
+      // Vibrate for the current letter
+      await this.vibrateForAnswer(letters[i]);
+      
+      // Brief pause between letters (except after the last one)
+      if (i < letters.length - 1) {
+        await this.delay(1000);
       }
-      
-      // Pause before starting the next loop
-      await this.delay(3000); // 3 seconds before next loop starts
-      
-      loopCount++;
     }
+    
+    console.log('✅ Vibration test with new pattern completed');
   }
 
   /**

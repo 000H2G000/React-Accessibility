@@ -1,6 +1,7 @@
 import { HapticService } from './HapticService';
 import { FlashlightService } from './FlashlightService';
 import { QCMAnswer } from './QCMPatternService';
+import * as Haptics from 'expo-haptics';
 
 export interface QCMVibrationFlashSettings {
   enableVibration: boolean;
@@ -33,10 +34,9 @@ export class QCMVibrationFlashService {
 
     return { haptic, flashlight };
   }
-
   /**
    * Process QCM answers with combined vibration and flashlight feedback
-   * Supports patterns like: "1-A [flash] B, 2-A, 3-C [flash] B [flash] A"
+   * New pattern: 20 medium vibrations before each question, 5s silence between answers within same question
    */
   static async processQCMWithFlashSeparation(
     answers: QCMAnswer[],
@@ -45,7 +45,7 @@ export class QCMVibrationFlashService {
     const config = { ...this.defaultSettings, ...settings };
     
     try {
-      console.log('Starting QCM processing with flash separation...');
+      console.log('Starting QCM processing with new vibration pattern...');
       
       // Group answers by question number
       const groupedAnswers = this.groupAnswersByQuestion(answers);
@@ -53,6 +53,12 @@ export class QCMVibrationFlashService {
       for (let i = 0; i < groupedAnswers.length; i++) {
         const questionGroup = groupedAnswers[i];
         console.log(`Processing question ${questionGroup.questionNumber} with ${questionGroup.answers.length} answers`);
+        
+        // Play 20 medium vibrations before each question
+        if (config.enableVibration) {
+          console.log(`Playing 20 medium vibrations for question ${questionGroup.questionNumber}`);
+          await this.play20MediumVibrations();
+        }
         
         // Process each answer in the question
         for (let j = 0; j < questionGroup.answers.length; j++) {
@@ -64,24 +70,29 @@ export class QCMVibrationFlashService {
             console.log(`Vibrated for answer: ${answer.answer}`);
           }
           
-          // Add flashlight separation if not the last answer in the question
-          if (j < questionGroup.answers.length - 1 && config.enableFlashlight) {
-            await this.delay(config.delayAfterSeparator);
-            await FlashlightService.flash(config.flashlightSeparatorDuration);
-            console.log('Separator flash executed');
-            await this.delay(config.delayAfterSeparator);
+          // Add 5-second silence between answers within the same question (except after the last answer)
+          if (j < questionGroup.answers.length - 1) {
+            console.log(`5-second silence between answers in question ${questionGroup.questionNumber}`);
+            await this.delay(5000); // 5 seconds silence
+            
+            // Optional flashlight separation
+            if (config.enableFlashlight) {
+              await FlashlightService.flash(config.flashlightSeparatorDuration);
+              console.log('Separator flash executed');
+              await this.delay(config.delayAfterSeparator);
+            }
           }
         }
         
-        // Delay between questions (except after the last question)
+        // Small delay between questions (except after the last question)
         if (i < groupedAnswers.length - 1) {
-          await this.delay(config.delayBetweenAnswers);
+          await this.delay(1000); // Brief pause before next question
         }
       }
       
-      console.log('QCM processing with flash separation completed');
+      console.log('QCM processing with new vibration pattern completed');
     } catch (error) {
-      console.error('Error in QCM processing with flash separation:', error);
+      console.error('Error in QCM processing:', error);
       // Emergency cleanup
       await FlashlightService.emergencyOff();
       throw error;
@@ -237,6 +248,21 @@ export class QCMVibrationFlashService {
         questionNumber,
         answers: answers.sort((a, b) => a.answer.localeCompare(b.answer))
       }));
+  }
+  /**
+   * Play 20 medium vibrations with consistent timing
+   */
+  private static async play20MediumVibrations(): Promise<void> {
+    for (let i = 0; i < 20; i++) {
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      // Small delay between medium vibrations (except after the last one)
+      if (i < 19) {
+        await this.delay(150); // 150ms between medium vibrations
+      }
+    }
+    
+    // Brief pause after the 20 medium vibrations
+    await this.delay(500);
   }
 
   /**

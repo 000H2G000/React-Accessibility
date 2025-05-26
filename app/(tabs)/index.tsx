@@ -1,3 +1,4 @@
+
 import React, { useEffect, useState } from 'react';
 import {
     Alert,
@@ -13,69 +14,125 @@ import { ThemedView } from '@/components/ThemedView';
 import { HapticService } from '@/services/HapticService';
 import { QCMAnswer, QCMPatternService } from '@/services/QCMPatternService';
 import { QCMServerService, QCMFetchResponse, SessionInfo } from '@/services/QCMServerService';
-import { FlashlightService } from '@/services/FlashlightService';
 import { QCMVibrationFlashService } from '@/services/QCMVibrationFlashService';
+import { APIIntegrationService, ProcessingResult } from '@/services/APIIntegrationService';
+
+// Polling interval constants (in milliseconds)
+const POLLING_INTERVALS = {
+  FIVE_MINUTES: 300000,  // 5 minutes
+  THREE_MINUTES: 180000, // 3 minutes  
+  ONE_MINUTE: 60000,     // 1 minute
+  THIRTY_SECONDS: 30000, // 30 seconds (for testing)
+};
+
+// Helper function to format interval duration
+const formatInterval = (ms: number): string => {
+  const minutes = Math.floor(ms / 60000);
+  const seconds = Math.floor((ms % 60000) / 1000);
+  
+  if (minutes > 0) {
+    return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes} minute${minutes > 1 ? 's' : ''}`;
+  }
+  return `${seconds} second${seconds > 1 ? 's' : ''}`;
+};
 
 export default function HomeScreen() {
-  const [inputText, setInputText] = useState('');  const [detectedAnswers, setDetectedAnswers] = useState<QCMAnswer[]>([]);
+  // Basic state
+  const [inputText, setInputText] = useState('');
+  const [detectedAnswers, setDetectedAnswers] = useState<QCMAnswer[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [hapticAvailable, setHapticAvailable] = useState(false);
-  const [flashlightAvailable, setFlashlightAvailable] = useState(false);
-  const [enableFlashlight, setEnableFlashlight] = useState(true);
-    // Server-related state
+  
+  // API Integration state
+  const [autoProcessEnabled, setAutoProcessEnabled] = useState(true);
+  const [stopAfterProcessing, setStopAfterProcessing] = useState(true);
+  const [apiInitialized, setApiInitialized] = useState(false);
+  const [lastProcessingResult, setLastProcessingResult] = useState<ProcessingResult | null>(null);
+  const [currentPollingInterval, setCurrentPollingInterval] = useState(POLLING_INTERVALS.THREE_MINUTES);
+  
+  // Server-related state
   const [serverUrl, setServerUrl] = useState('https://e374-34-147-38-236.ngrok-free.app');
   const [isPolling, setIsPolling] = useState(false);
   const [serverConnected, setServerConnected] = useState(false);
   const [availableSessions, setAvailableSessions] = useState<SessionInfo[]>([]);
   const [lastFetchedData, setLastFetchedData] = useState<QCMFetchResponse | null>(null);
+
   useEffect(() => {
-    // Check if haptic feedback and flashlight are available
-    const checkAvailability = async () => {
+    // Initialize device capabilities and API integration
+    const initializeServices = async () => {
+      // Check device capabilities
       const haptic = await HapticService.isHapticAvailable();
-      const flashlight = await FlashlightService.isFlashlightAvailable();
       setHapticAvailable(haptic);
-      setFlashlightAvailable(flashlight);
       
-      if (flashlight) {
-        console.log('✨ Flashlight available for visual separation');
-      } else {
-        console.log('⚠️ Flashlight not available on this device');
+      console.log('🎯 Haptic feedback available:', haptic);
+
+      // Initialize API Integration Service
+      try {
+        await APIIntegrationService.initialize({
+          autoProcess: autoProcessEnabled,
+          processingSettings: {
+            enableVibration: haptic,
+            enableFlashlight: false, // Flashlight disabled
+            flashlightSeparatorDuration: 500,
+            delayBetweenAnswers: 1000,
+            delayAfterSeparator: 300,
+          },
+          pollingInterval: currentPollingInterval,
+          showNotifications: true,
+          stopAfterProcessing: stopAfterProcessing,
+        });
+
+        // Set up event listeners
+        APIIntegrationService.setEventListeners({
+          onDataReceived: (data: QCMFetchResponse) => {
+            console.log('📱 API: New QCM data received');
+            setLastFetchedData(data);
+            setInputText(data.formatted_text);
+          },
+          onProcessingComplete: (result: ProcessingResult) => {
+            console.log('✅ API: Processing completed', result);
+            setLastProcessingResult(result);
+            setIsProcessing(false);
+            
+            // Update polling state if processing was successful
+            if (result.success && result.processedAnswers.length > 0) {
+              setIsPolling(false);
+            }
+            
+            // Show completion notification
+            if (result.success) {
+              Alert.alert(
+                '✅ Auto-Processing Complete!',
+                `Processed ${result.totalAnswers} answers using: ${result.featuresUsed.join(', ')}\n\nPolling has been stopped.`,
+                [{ text: 'OK', style: 'default' }]
+              );
+            } else {
+              Alert.alert('⚠️ Processing Error', result.error || 'Unknown error occurred');
+            }
+          },
+          onError: (error: string) => {
+            console.error('❌ API Integration Error:', error);
+            setIsProcessing(false);
+            Alert.alert('❌ API Error', error);
+          },
+        });
+
+        setApiInitialized(true);
+        console.log('🚀 API Integration Service initialized successfully');
+      } catch (error) {
+        console.error('❌ Failed to initialize API Integration Service:', error);
+        Alert.alert('Initialization Error', 'Failed to initialize API integration');
       }
     };
     
-    checkAvailability();
-    
-    // Set up QCM data listener
-    const handleQCMData = (data: QCMFetchResponse) => {
-      console.log('📱 Received QCM data from server:', data);
-      setLastFetchedData(data);
-      setInputText(data.formatted_text);
-      
-      // Show notification
-      Alert.alert(
-        '📝 New QCM Received!',
-        `Session: ${data.session_id}\nQuestions: ${data.total_answers}\n\nData loaded into input field.`,
-        [
-          { text: 'View Only', style: 'cancel' },
-          { 
-            text: 'Process & Vibrate', 
-            onPress: () => {
-              if (hapticAvailable) {
-                handleProcessText();
-              }
-            }
-          }
-        ]
-      );
-    };
-    
-    QCMServerService.addListener(handleQCMData);
+    initializeServices();
     
     return () => {
-      QCMServerService.removeListener(handleQCMData);
-      QCMServerService.stopPolling();
+      // Cleanup API integration service
+      APIIntegrationService.cleanup();
+      setApiInitialized(false);
     };
-  }, [hapticAvailable]);
+  }, [autoProcessEnabled, stopAfterProcessing, currentPollingInterval]);
 
   useEffect(() => {
     // Real-time QCM detection as user types
@@ -96,19 +153,17 @@ export default function HomeScreen() {
     if (answers.length === 0) {
       Alert.alert('No QCM Found', 'No QCM answers detected in the text. Try formats like:\n• 1/c\n• 2. b\n• 3-a\n• Q4: d');
       return;
-    }
-
-    if (!hapticAvailable && !flashlightAvailable) {
-      Alert.alert('Features Unavailable', 'Neither haptic feedback nor flashlight is available on this device');
+    }    if (!hapticAvailable) {
+      Alert.alert('Features Unavailable', 'Haptic feedback is not available on this device');
       return;
     }
 
     setIsProcessing(true);
     try {
-      // Use the combined service for vibration + flash separation
+      // Use the combined service for vibration only (flashlight disabled)
       await QCMVibrationFlashService.processQCMWithFlashSeparation(answers, {
         enableVibration: hapticAvailable,
-        enableFlashlight: flashlightAvailable && enableFlashlight,
+        enableFlashlight: false, // Flashlight disabled
         flashlightSeparatorDuration: 500,
         delayBetweenAnswers: 1000,
         delayAfterSeparator: 300,
@@ -117,7 +172,6 @@ export default function HomeScreen() {
       const processedCount = answers.length;
       const features = [];
       if (hapticAvailable) features.push('vibration');
-      if (flashlightAvailable && enableFlashlight) features.push('flashlight separation');
       
       Alert.alert(
         '✅ Processing Complete', 
@@ -159,68 +213,34 @@ export default function HomeScreen() {
     } finally {
       setIsProcessing(false);
     }
-  };
-
-  const handleTestFlashlight = async () => {
-    if (!flashlightAvailable) {
-      Alert.alert('Flashlight Unavailable', 'Flashlight is not available on this device');
-      return;
-    }
-
-    try {
-      await QCMVibrationFlashService.testFlashlight();
-      Alert.alert('✨ Flashlight Test', 'Flashlight test completed!');
-    } catch (error) {
-      console.error('Flashlight test error:', error);
-      Alert.alert('Error', 'Failed to test flashlight');
-    }
-  };
-
-  const handleTestCombined = async () => {
-    if (!hapticAvailable && !flashlightAvailable) {
-      Alert.alert('Features Unavailable', 'Neither haptic feedback nor flashlight is available');
+  };  const handleTestAllFeatures = async () => {
+    if (!hapticAvailable) {
+      Alert.alert('Features Unavailable', 'Haptic feedback is not available on this device');
       return;
     }
 
     setIsProcessing(true);
     try {
-      await QCMVibrationFlashService.testCombined();
-      Alert.alert('✨ Combined Test', 'Combined vibration + flash test completed!');
+      // Test with vibration only (flashlight disabled)
+      await QCMVibrationFlashService.processQCMWithFlashSeparation(
+        [
+          { questionNumber: 1, answer: 'a', rawText: '1/a' },
+          { questionNumber: 2, answer: 'b', rawText: '2/b' },
+          { questionNumber: 3, answer: 'c', rawText: '3/c' },
+          { questionNumber: 4, answer: 'd', rawText: '4/d' }
+        ],
+        {
+          enableVibration: hapticAvailable,
+          enableFlashlight: false,
+          flashlightSeparatorDuration: 500,
+          delayBetweenAnswers: 1000,
+          delayAfterSeparator: 300,
+        }
+      );
+      Alert.alert('✨ Test Complete', 'All available features tested successfully!');
     } catch (error) {
-      console.error('Combined test error:', error);
-      Alert.alert('Error', 'Failed to test combined functionality');
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  const handleTestCustomPattern = async () => {
-    if (!hapticAvailable && !flashlightAvailable) {
-      Alert.alert('Features Unavailable', 'Neither haptic feedback nor flashlight is available');
-      return;
-    }
-
-    setIsProcessing(true);
-    try {
-      // Example: "1-A flash B, 2-A, 3-C flash B flash A"
-      const pattern = [
-        { answer: 'a', flashAfter: true },  // 1-A [flash]
-        { answer: 'b', flashAfter: false }, // B
-        { answer: 'a', flashAfter: false }, // 2-A
-        { answer: 'c', flashAfter: true },  // 3-C [flash]
-        { answer: 'b', flashAfter: true },  // B [flash]
-        { answer: 'a', flashAfter: false }  // A
-      ];
-
-      await QCMVibrationFlashService.executeCustomPattern(pattern, {
-        enableVibration: hapticAvailable,
-        enableFlashlight: flashlightAvailable && enableFlashlight,
-      });
-
-      Alert.alert('✨ Custom Pattern', 'Custom pattern "A-flash-B, A, C-flash-B-flash-A" completed!');
-    } catch (error) {
-      console.error('Custom pattern test error:', error);
-      Alert.alert('Error', 'Failed to test custom pattern');
+      console.error('Test all features error:', error);
+      Alert.alert('Error', 'Failed to test features');
     } finally {
       setIsProcessing(false);
     }
@@ -254,16 +274,15 @@ export default function HomeScreen() {
     if (sessionsData) {
       setAvailableSessions(sessionsData.sessions);
     }
-  };
-  const handleStartPolling = () => {
+  };  const handleStartPolling = () => {
     if (!serverConnected) {
       Alert.alert('Error', 'Please test connection first');
       return;
     }
 
-    QCMServerService.startSimplePolling(3000);
+    QCMServerService.startSimplePolling(currentPollingInterval);
     setIsPolling(true);
-    Alert.alert('🔄 Polling Started', 'Listening for new QCM data from server');
+    Alert.alert('🔄 Polling Started', `Listening for new QCM data from server every ${formatInterval(currentPollingInterval)}`);
   };
 
   const handleStopPolling = () => {
@@ -290,6 +309,95 @@ export default function HomeScreen() {
         { text: 'Fetch QCM', onPress: () => handleFetchSpecific() },
         { text: 'Start Polling', onPress: () => handleStartPolling() }
       ]
+    );
+  };
+
+  // New API Integration functions
+  const handleStartAutoProcessing = async () => {
+    if (!apiInitialized) {
+      Alert.alert('Not Ready', 'API Integration service is not initialized yet');
+      return;
+    }
+
+    try {
+      setIsPolling(true);
+      APIIntegrationService.startAutomaticProcessing(serverUrl);      Alert.alert(
+        '🚀 Auto-Processing Started',
+        `The app will now automatically check for QCM data every ${formatInterval(currentPollingInterval)} and process it when found.\n\nFeatures enabled:\n` +
+        `• Haptic vibration: ${hapticAvailable ? '✅' : '❌'}\n` +
+        `• Flashlight separation: ❌ (Disabled)\n` +
+        `• Check interval: ${formatInterval(currentPollingInterval)}`
+      );
+    } catch (error) {
+      setIsPolling(false);
+      console.error('Error starting auto-processing:', error);
+      Alert.alert('Error', 'Failed to start automatic processing');
+    }
+  };
+
+  const handleStopAutoProcessing = () => {
+    APIIntegrationService.stopAutomaticProcessing();
+    setIsPolling(false);
+    Alert.alert('⏹️ Auto-Processing Stopped', 'Automatic QCM processing has been disabled');
+  };
+
+  const handleCheckForNewQCM = async () => {
+    if (!apiInitialized) {
+      Alert.alert('Not Ready', 'API Integration service is not initialized yet');
+      return;
+    }
+
+    setIsProcessing(true);
+    try {
+      const result = await APIIntegrationService.checkAndProcessNewQCM();
+      
+      if (!result) {
+        Alert.alert('📭 No Data', 'No new QCM data available on the server');
+      } else if (result.success) {
+        Alert.alert(
+          '✅ QCM Processed',
+          `Successfully processed ${result.totalAnswers} answers using: ${result.featuresUsed.join(', ')}`
+        );
+      } else {
+        Alert.alert('❌ Processing Failed', result.error || 'Unknown error occurred');
+      }
+    } catch (error) {
+      console.error('Error checking for new QCM:', error);
+      Alert.alert('Error', 'Failed to check for new QCM data');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleToggleAutoProcess = () => {
+    const newValue = !autoProcessEnabled;
+    setAutoProcessEnabled(newValue);
+    
+    if (apiInitialized) {
+      APIIntegrationService.updateSettings({ autoProcess: newValue });
+    }
+    
+    Alert.alert(
+      'Auto-Processing ' + (newValue ? 'Enabled' : 'Disabled'),
+      newValue 
+        ? 'QCM data will be automatically processed when received'
+        : 'QCM data will only be loaded into the input field'
+    );
+  };
+
+  const handleToggleStopAfterProcessing = () => {
+    const newValue = !stopAfterProcessing;
+    setStopAfterProcessing(newValue);
+    
+    if (apiInitialized) {
+      APIIntegrationService.updateSettings({ stopAfterProcessing: newValue });
+    }
+    
+    Alert.alert(
+      'Stop After Processing ' + (newValue ? 'Enabled' : 'Disabled'),
+      newValue 
+        ? 'Polling will stop automatically after successfully processing QCM data'
+        : 'Polling will continue running even after processing QCM data'
     );
   };
 
@@ -399,11 +507,9 @@ export default function HomeScreen() {
             >
               <ThemedText style={styles.buttonText}>📥 Fetch Latest</ThemedText>
             </TouchableOpacity>
-          </View>
-
-          {isPolling && (
+          </View>          {isPolling && (
             <ThemedText style={styles.pollingStatus}>
-              🔄 Listening for new QCM data from server
+              🔄 Listening for new QCM data from server (checking every {formatInterval(currentPollingInterval)})
             </ThemedText>
           )}
         </ThemedView>
@@ -597,6 +703,88 @@ export default function HomeScreen() {
             🔥 <ThemedText style={styles.bold}>MAX POWER</ThemedText>: Tests phone's maximum vibration capability{'\n'}
             ⚡ <ThemedText style={styles.bold}>EMERGENCY</ThemedText>: Ultra-strong attention-getting pattern
           </ThemedText>
+        </ThemedView>
+
+        {/* API Integration Section */}
+        <ThemedView style={styles.section}>
+          <ThemedText type="subtitle" style={styles.sectionTitle}>
+            🤖 API Integration
+          </ThemedText>
+          
+          <ThemedText style={styles.helpText}>
+            Automatic QCM processing from server data
+          </ThemedText>          <View style={styles.apiStatusContainer}>
+            <ThemedText style={[styles.apiStatusText, apiInitialized ? styles.apiStatusReady : styles.apiStatusNotReady]}>
+              {apiInitialized ? '✅ API Service Ready' : '⏳ Initializing...'}
+            </ThemedText>
+            <ThemedText style={[styles.apiStatusText, autoProcessEnabled ? styles.apiStatusEnabled : styles.apiStatusDisabled]}>
+              Auto-Process: {autoProcessEnabled ? 'ON' : 'OFF'}
+            </ThemedText>
+            <ThemedText style={[styles.apiStatusText, stopAfterProcessing ? styles.apiStatusEnabled : styles.apiStatusDisabled]}>
+              Stop After Processing: {stopAfterProcessing ? 'ON' : 'OFF'}
+            </ThemedText>
+          </View>          <View style={styles.buttonRow}>
+            <TouchableOpacity 
+              style={[styles.button, autoProcessEnabled ? styles.apiDisableButton : styles.apiEnableButton]}
+              onPress={handleToggleAutoProcess}
+              disabled={!apiInitialized}
+            >
+              <ThemedText style={styles.buttonText}>
+                {autoProcessEnabled ? '🔴 Disable Auto' : '🟢 Enable Auto'}
+              </ThemedText>
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+              style={[styles.button, stopAfterProcessing ? styles.apiDisableButton : styles.apiEnableButton]}
+              onPress={handleToggleStopAfterProcessing}
+              disabled={!apiInitialized}
+            >
+              <ThemedText style={styles.buttonText}>
+                {stopAfterProcessing ? '🔴 Continuous' : '🟢 Stop After'}
+              </ThemedText>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.buttonRow}>
+            <TouchableOpacity 
+              style={[styles.button, styles.apiCheckButton]}
+              onPress={handleCheckForNewQCM}
+              disabled={!apiInitialized || isProcessing}
+            >
+              <ThemedText style={styles.buttonText}>
+                {isProcessing ? '⏳ Checking...' : '🔍 Check Now'}
+              </ThemedText>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.buttonRow}>
+            <TouchableOpacity 
+              style={[
+                styles.button, 
+                isPolling ? styles.apiStopButton : styles.apiStartButton,
+                !apiInitialized && styles.disabledButton
+              ]}
+              onPress={isPolling ? handleStopAutoProcessing : handleStartAutoProcessing}
+              disabled={!apiInitialized}
+            >
+              <ThemedText style={styles.buttonText}>
+                {isPolling ? '⏹️ Stop Auto-Processing' : '▶️ Start Auto-Processing'}
+              </ThemedText>
+            </TouchableOpacity>
+          </View>          {lastProcessingResult && (
+            <View style={styles.apiResultContainer}>
+              <ThemedText style={[styles.resultText, lastProcessingResult.success ? styles.successText : styles.errorText]}>
+                {lastProcessingResult.success 
+                  ? `✅ Last processed: ${lastProcessingResult.totalAnswers} answers with ${lastProcessingResult.featuresUsed.join(', ')}`
+                  : `❌ Last error: ${lastProcessingResult.error}`
+                }
+              </ThemedText>
+            </View>
+          )}          {isPolling && (
+            <ThemedText style={styles.pollingStatus}>
+              🔄 Auto-processing active (checking every {formatInterval(currentPollingInterval)} for new QCM data)
+            </ThemedText>
+          )}
         </ThemedView>
       </ThemedView>
     </ScrollView>
@@ -881,5 +1069,105 @@ const styles = StyleSheet.create({
     color: '#2196F3',
     fontWeight: '500',
     marginTop: 8,
+  },
+  statusContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  statusText: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  statusReady: {
+    color: '#4CAF50',
+  },
+  statusNotReady: {
+    color: '#FF9800',
+  },
+  statusEnabled: {
+    color: '#4CAF50',
+  },
+  statusDisabled: {
+    color: '#FF5722',
+  },
+  enableButton: {
+    backgroundColor: '#4CAF50',
+  },
+  disableButton: {
+    backgroundColor: '#FF5722',
+  },
+  checkButton: {
+    backgroundColor: '#3F51B5',
+  },
+  startButton: {
+    backgroundColor: '#2196F3',
+  },
+  stopButton: {
+    backgroundColor: '#FF9800',
+  },
+  resultContainer: {
+    marginTop: 12,
+    padding: 12,
+    borderRadius: 8,
+    backgroundColor: '#f0f8ff',
+  borderWidth: 1,
+    borderColor: '#2196F3',
+  },
+  resultText: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  successText: {
+    color: '#4CAF50',
+  },  errorText: {
+    color: '#F44336',
+  },
+  // API Integration styles
+  apiStatusContainer: {
+    backgroundColor: '#f0f0f0',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 16,
+  },
+  apiStatusText: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  apiStatusReady: {
+    color: '#4CAF50',
+  },
+  apiStatusNotReady: {
+    color: '#FF9800',
+  },
+  apiStatusEnabled: {
+    color: '#2196F3',
+  },
+  apiStatusDisabled: {
+    color: '#757575',
+  },
+  apiEnableButton: {
+    backgroundColor: '#4CAF50',
+  },
+  apiDisableButton: {
+    backgroundColor: '#FF5722',
+  },
+  apiCheckButton: {
+    backgroundColor: '#2196F3',
+  },
+  apiStartButton: {
+    backgroundColor: '#4CAF50',
+  },
+  apiStopButton: {
+    backgroundColor: '#F44336',
+  },
+  apiResultContainer: {
+    backgroundColor: '#f8f8f8',
+    borderRadius: 8,
+    padding: 12,
+    marginTop: 12,
+    borderLeftWidth: 4,
+    borderLeftColor: '#2196F3',
   },
 });
